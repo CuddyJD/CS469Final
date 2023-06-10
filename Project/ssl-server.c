@@ -44,6 +44,13 @@ SYNOPSIS: This program is a small server application that receives incoming TCP
 #define KEY_FILE "key.pem"
 #define DB_PATH "./users.sqlite3"
 #define DB_PATH_BACKUP "./users.sqlite3.bak"
+
+//Mutex lock to prevent access to db while it's backing up
+static pthread_mutex_t dbLock = PTHREAD_MUTEX_INITIALIZER;
+
+//Time intervals between backups in seconds. Global to share between main and threads.
+int backupTime = DEFAULT_BACKUPTIME;
+
 /******************************************************************************
 
 This function does the basic necessary housekeeping to establish TCP connections
@@ -284,7 +291,7 @@ int makeResultsFile()
 }
 
 //When called, function backs up the DB to a backup file every 'time' seconds
-void* backup(int* time){
+void* backup(void* param){
     long long byteCount;
 	int readFile,
 	    writeFile,
@@ -297,7 +304,11 @@ void* backup(int* time){
 
     //Continue backup loop forever!
     while(true){
-        sleep(*time); //delay in backup cycles
+        sleep(backupTime); //delay in backup cycles
+
+        //Block until mutex lock is aquired
+        pthread_mutex_lock(&dbLock);
+        printf("Backup Daemon: Mutex lock aquired.\n");
 
         //Open source file and test for success
 	    readFile = open(DB_PATH, O_RDONLY, 0);
@@ -340,6 +351,10 @@ void* backup(int* time){
 			    byteCount += writeResult;    //tracking total data copied for final display
 		    }
 	    }
+
+        //Release db mutex lock for client operations
+        pthread_mutex_unlock(&dbLock);
+        printf("Backup Daemon: Mutex lock released.\n");
     }
 }
 
@@ -369,8 +384,7 @@ int main(int argc, char **argv)
   unsigned int  port;
   char          buffer[BUFFER_SIZE],
                 inputStr[BUFFER_SIZE];
-  int           backupTime = DEFAULT_BACKUPTIME,
-                inputInt,
+  int           inputInt,
                 inputLen;
   bool          inputLoop = true,
                 validInt = true;
@@ -526,6 +540,10 @@ int main(int argc, char **argv)
         else
           printf("Server: Command received from client: %s %s\n", operation, term);
 
+        //Aquire mutex lock to prevent access while backup in progress
+        pthread_mutex_lock(&dbLock);
+        printf("Server: Mutex lock aquired.\n");
+
         // start db code
         char dbName[50];
         strcpy(dbName, "users.sqlite3");
@@ -616,6 +634,10 @@ int main(int argc, char **argv)
           writeToResults(file, "Operation Complete\n");
         }
 
+        //Release mutex lock for backup daemon
+        pthread_mutex_unlock(&dbLock);
+        printf("Server: Mutex lock released.\n");
+
         printf("Database closed\n");
         sqlite3_close(db);
         close(file);
@@ -647,6 +669,8 @@ int main(int argc, char **argv)
         }
 
       } while (exit != 0);
+
+
       // Terminate the SSL session, close the TCP connection, and clean up
       printf("Server: Terminating SSL session and TCP connection with client (%s)\n",
              client_addr);
