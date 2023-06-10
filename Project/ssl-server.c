@@ -35,6 +35,7 @@ SYNOPSIS: This program is a small server application that receives incoming TCP
 #include <errno.h>
 #include <sqlite3.h>
 #include <ctype.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 256
 #define DEFAULT_PORT 4433
@@ -283,7 +284,7 @@ int makeResultsFile()
 }
 
 //When called, function backs up the DB to a backup file every 'time' seconds
-void backup(int time){
+void* backup(int* time){
     long long byteCount;
 	int readFile,
 	    writeFile,
@@ -292,9 +293,11 @@ void backup(int time){
 	bool complete;
 	char buffer[BUFFER_SIZE];
 
+    printf("Backup Daemon: Starting up!\n");
+
     //Continue backup loop forever!
     while(true){
-        sleep(time); //delay in backup cycles
+        sleep(*time); //delay in backup cycles
 
         //Open source file and test for success
 	    readFile = open(DB_PATH, O_RDONLY, 0);
@@ -329,14 +332,14 @@ void backup(int time){
 		    }else if(!complete){             //Read success
 			    writeResult = write(writeFile, buffer, readResult);
 
-			if(writeResult < 0){     //Write error
-				printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n",
-					DB_PATH_BACKUP, strerror(errno));
-				break;
-			}
-			byteCount += writeResult;    //tracking total data copied for final display
-		}
-	}
+			    if(writeResult < 0){     //Write error
+				    printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n",
+					    DB_PATH_BACKUP, strerror(errno));
+				    break;
+			    }
+			    byteCount += writeResult;    //tracking total data copied for final display
+		    }
+	    }
     }
 }
 
@@ -361,16 +364,17 @@ allocated to the SSL object and close the socket descriptor.
 
 int main(int argc, char **argv)
 {
-  SSL_CTX *ssl_ctx;
-  unsigned int sockfd;
-  unsigned int port;
-  char buffer[BUFFER_SIZE],
-       inputStr[BUFFER_SIZE];
-  int   backupTime = DEFAULT_BACKUPTIME,
-        inputInt,
-        inputLen;
-  bool  inputLoop = true,
-        validInt = true;
+  SSL_CTX       *ssl_ctx;
+  unsigned int  sockfd;
+  unsigned int  port;
+  char          buffer[BUFFER_SIZE],
+                inputStr[BUFFER_SIZE];
+  int           backupTime = DEFAULT_BACKUPTIME,
+                inputInt,
+                inputLen;
+  bool          inputLoop = true,
+                validInt = true;
+  pthread_t     threadID;
 
   //Prompt user for custom backup frequency, or continue with default (60 second)
   printf("Server: Initializing ... \n");
@@ -416,7 +420,8 @@ int main(int argc, char **argv)
     inputLoop = false;
   }
 
-  backup(backupTime);
+  //Create Backup Daemon thread using backup frequency
+  pthread_create(&threadID, NULL, backup, &backupTime);
 
   // Initialize and create SSL data structures and algorithms
   init_openssl();
@@ -649,6 +654,8 @@ int main(int argc, char **argv)
       close(client);
 
     }
+    //Block and wait for Backup Daemon to complete and join
+    pthread_join(threadID, NULL);
 
     // Tear down and clean up server data structures before terminating
     SSL_CTX_free(ssl_ctx);
