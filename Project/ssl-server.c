@@ -408,10 +408,10 @@ int main(int argc, char **argv)
 
     //-- At this point the input is successful --
     if(inputInt == 0){    //Zero input = use default
-        printf("Success! Backup time configured to default setting (%d seconds).\n", backupTime);
+        printf("Server: Success! Backup time configured to default setting (%d seconds).\n", backupTime);
     }else{   //Non zero input use the user's input
         backupTime = inputInt;
-        printf("Success! Backup time configured (%d seconds).\n", backupTime);
+        printf("Server: Success! Backup time configured (%d seconds).\n", backupTime);
     }
     inputLoop = false;
   }
