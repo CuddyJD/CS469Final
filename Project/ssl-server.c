@@ -34,12 +34,15 @@ SYNOPSIS: This program is a small server application that receives incoming TCP
 #include <openssl/err.h>
 #include <errno.h>
 #include <sqlite3.h>
+#include <ctype.h>
 
 #define BUFFER_SIZE 256
 #define DEFAULT_PORT 4433
+#define DEFAULT_BACKUPTIME 60
 #define CERTIFICATE_FILE "cert.pem"
 #define KEY_FILE "key.pem"
-
+#define DB_PATH "./users.sqlite3"
+#define DB_PATH_BACKUP "./users.sqlite3.bak"
 /******************************************************************************
 
 This function does the basic necessary housekeeping to establish TCP connections
@@ -279,6 +282,64 @@ int makeResultsFile()
   return file;
 }
 
+//When called, function backs up the DB to a backup file every 'time' seconds
+void backup(int time){
+    long long byteCount;
+	int readFile,
+	    writeFile,
+	    readResult,
+	    writeResult;
+	bool complete;
+	char buffer[BUFFER_SIZE];
+
+    //Continue backup loop forever!
+    while(true){
+        sleep(time); //delay in backup cycles
+
+        //Open source file and test for success
+	    readFile = open(DB_PATH, O_RDONLY, 0);
+	    if(readFile < 0){
+		    printf("Backup Daemon: ERROR! Unable to open source file '%s' (%s)\n", DB_PATH, strerror(errno));
+		    continue;
+	    }
+
+       	//Attempt to create destination for copy data
+	    writeFile = creat(DB_PATH_BACKUP, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	    if(writeFile < 0){
+		    printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
+		    continue;
+	    }
+
+        //Copy source file into destination
+	    complete = false;
+	    byteCount = 0;
+	    while(!complete){
+		    //Read next buffer
+		    readResult = read(readFile, buffer, BUFFER_SIZE);
+		    if(readResult == 0){             //End of file
+			    complete = true;
+			    printf("Backup Daemon: %lli total bytes backed up from '%s' to '%s'\n", byteCount, DB_PATH, DB_PATH_BACKUP);
+			    close(readFile);
+			    close(writeFile);
+
+		    }else if(readResult < 0){        //Read error
+			    printf("Backup Daemon: Unable to read from source file '%s' (%s)\n", DB_PATH, strerror(errno));
+			    break;
+
+		    }else if(!complete){             //Read success
+			    writeResult = write(writeFile, buffer, readResult);
+
+			if(writeResult < 0){     //Write error
+				printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n",
+					DB_PATH_BACKUP, strerror(errno));
+				break;
+			}
+			byteCount += writeResult;    //tracking total data copied for final display
+		}
+	}
+    }
+}
+
 /******************************************************************************
 
 The sequence of steps required to establish a secure SSL/TLS connection is:
@@ -303,7 +364,59 @@ int main(int argc, char **argv)
   SSL_CTX *ssl_ctx;
   unsigned int sockfd;
   unsigned int port;
-  char buffer[BUFFER_SIZE];
+  char buffer[BUFFER_SIZE],
+       inputStr[BUFFER_SIZE];
+  int   backupTime = DEFAULT_BACKUPTIME,
+        inputInt,
+        inputLen;
+  bool  inputLoop = true,
+        validInt = true;
+
+  //Prompt user for custom backup frequency, or continue with default (60 second)
+  printf("Server: Initializing ... \n");
+  while(inputLoop){
+
+    //Get input as string
+    printf("Server: Enter backup frequency in seconds (or 0 to use default setting): ");
+    fgets(inputStr, sizeof(inputStr), stdin);
+    inputLen = strlen(inputStr) - 1;
+
+    //Parse string for all integer values
+    for(int i = 0; i < inputLen; i++){
+        if(!isdigit(inputStr[i])){
+            validInt = false;
+            break;
+        }
+    }
+
+    //Store value if its an integer, else back to start of loop
+    if(validInt){
+        inputInt = atoi(inputStr);
+    }else{
+        printf("Server: ERROR! Unable to parse backup frequency.\n");
+        printf("Server: Input must be an integer number.\n");
+        validInt = true;
+        continue;
+    }
+
+    //Check for negative numbers. Display error and return to start of loop
+    if(inputInt < 0){
+        printf("Server: ERROR! Unable to parse backup frequency.\n");
+        printf("Server: Input must be a non-negative number.\n");
+        continue;
+    }
+
+    //-- At this point the input is successful --
+    if(inputInt == 0){    //Zero input = use default
+        printf("Success! Backup time configured to default setting (%d seconds).\n", backupTime);
+    }else{   //Non zero input use the user's input
+        backupTime = inputInt;
+        printf("Success! Backup time configured (%d seconds).\n", backupTime);
+    }
+    inputLoop = false;
+  }
+
+  backup(backupTime);
 
   // Initialize and create SSL data structures and algorithms
   init_openssl();
