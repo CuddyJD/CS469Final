@@ -362,7 +362,7 @@ void* backup(void* param){
 }
 
 //When called, restores backup file into main db path. Modified non-looping version of backup method w reversed paths
-int restore(){
+bool restore(){
     long long byteCount;
 	int readFile,
 	    writeFile,
@@ -378,14 +378,14 @@ int restore(){
     readFile = open(DB_PATH_BACKUP, O_RDONLY, 0);
     if(readFile < 0){
         printf("Backup Restore: ERROR! Unable to open source file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
-        return EXIT_FAILURE;
+        return false;
     }
 
     //Attempt to create destination for copy data
     writeFile = creat(DB_PATH, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
     if(writeFile < 0){
         printf("Backup Restore: Unable to write to destination file '%s' (%s)\n", DB_PATH, strerror(errno));
-        return EXIT_FAILURE;
+        return false;
     }
 
     //Copy source file into destination
@@ -399,17 +399,17 @@ int restore(){
             printf("Backup Restore: %lli total bytes restored up from '%s' to '%s'\n", byteCount, DB_PATH_BACKUP, DB_PATH);
             close(readFile);
             close(writeFile);
-
+            return true;
         }else if(readResult < 0){        //Read error
             printf("Backup Restore: Unable to read from source file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
-            return EXIT_FAILURE;
+            return false;
 
         }else if(!complete){             //Read success
             writeResult = write(writeFile, buffer, readResult);
 
             if(writeResult < 0){     //Write error
                 printf("Backup Restore: Unable to write to destination file '%s' (%s)\n", DB_PATH, strerror(errno));
-                return EXIT_FAILURE;
+                return false;
             }
             byteCount += writeResult;    //tracking total data copied for final display
         }
