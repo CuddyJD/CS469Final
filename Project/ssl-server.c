@@ -301,6 +301,7 @@ void* backup(void* param){
 	char buffer[BUFFER_SIZE];
 
     printf("Backup Daemon: Starting up!\n");
+    bzero(buffer, BUFFER_SIZE);
 
     //Continue backup loop forever!
     while(true){
@@ -338,6 +339,7 @@ void* backup(void* param){
 
 		    }else if(readResult < 0){        //Read error
 			    printf("Backup Daemon: Unable to read from source file '%s' (%s)\n", DB_PATH, strerror(errno));
+                pthread_mutex_unlock(&dbLock);
 			    break;
 
 		    }else if(!complete){             //Read success
@@ -346,6 +348,7 @@ void* backup(void* param){
 			    if(writeResult < 0){     //Write error
 				    printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n",
 					    DB_PATH_BACKUP, strerror(errno));
+                    pthread_mutex_unlock(&dbLock);
 				    break;
 			    }
 			    byteCount += writeResult;    //tracking total data copied for final display
@@ -355,6 +358,61 @@ void* backup(void* param){
         //Release db mutex lock for client operations
         pthread_mutex_unlock(&dbLock);
         printf("Backup Daemon: Mutex lock released.\n");
+    }
+}
+
+//When called, restores backup file into main db path. Modified non-looping version of backup method w reversed paths
+int restore(){
+    long long byteCount;
+	int readFile,
+	    writeFile,
+	    readResult,
+	    writeResult;
+	bool complete;
+	char buffer[BUFFER_SIZE];
+
+    printf("Backup Restore: Starting up!\n");
+    bzero(buffer, BUFFER_SIZE);
+
+    //Open source file and test for success
+    readFile = open(DB_PATH_BACKUP, O_RDONLY, 0);
+    if(readFile < 0){
+        printf("Backup Restore: ERROR! Unable to open source file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    //Attempt to create destination for copy data
+    writeFile = creat(DB_PATH, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if(writeFile < 0){
+        printf("Backup Restore: Unable to write to destination file '%s' (%s)\n", DB_PATH, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
+    //Copy source file into destination
+    complete = false;
+    byteCount = 0;
+    while(!complete){
+        //Read next buffer
+        readResult = read(readFile, buffer, BUFFER_SIZE);
+        if(readResult == 0){             //End of file
+            complete = true;
+            printf("Backup Restore: %lli total bytes restored up from '%s' to '%s'\n", byteCount, DB_PATH_BACKUP, DB_PATH);
+            close(readFile);
+            close(writeFile);
+
+        }else if(readResult < 0){        //Read error
+            printf("Backup Restore: Unable to read from source file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
+            return EXIT_FAILURE;
+
+        }else if(!complete){             //Read success
+            writeResult = write(writeFile, buffer, readResult);
+
+            if(writeResult < 0){     //Write error
+                printf("Backup Restore: Unable to write to destination file '%s' (%s)\n", DB_PATH, strerror(errno));
+                return EXIT_FAILURE;
+            }
+            byteCount += writeResult;    //tracking total data copied for final display
+        }
     }
 }
 
@@ -634,7 +692,7 @@ int main(int argc, char **argv)
           writeToResults(file, "Operation Complete\n");
         }
 
-        //Release mutex lock for backup daemon
+        //Release mutex lock for backup daemon to continue
         pthread_mutex_unlock(&dbLock);
         printf("Server: Mutex lock released.\n");
 
