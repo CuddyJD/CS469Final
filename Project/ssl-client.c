@@ -235,10 +235,17 @@ int main(int argc, char **argv)
       }
       break;
     }
+    if (strcmp(operation, "display") == 0) {
+      printf("Client: Enter search term or all: ");
+      bzero(term, 100);
+      fgets(term, 100 - 1, stdin);
 
-    printf("Client: Enter term: ");
-    bzero(term, 100);
-    fgets(term, 100 - 1, stdin);
+    } else {
+      printf("Client: Enter term: ");
+      bzero(term, 100);
+      fgets(term, 100 - 1, stdin);
+    }
+
 
     // Remove trailing newline character
     term[strlen(term) - 1] = '\0';
