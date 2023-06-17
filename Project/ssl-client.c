@@ -213,7 +213,6 @@ int main(int argc, char **argv)
   char term[100];
   do
   {
-
     do
     {
       // The user enters a request and provides a file name

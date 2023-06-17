@@ -229,8 +229,6 @@ static int results(void *NotUsed, int argc, char **argv, char **azColName)
   int i;
   FILE *fp;
 
-
-
   fp = fopen("data", "a");
   if (fp == NULL) {
     fprintf(stderr, "Error: Unable to open data file\n");
@@ -245,9 +243,7 @@ static int results(void *NotUsed, int argc, char **argv, char **azColName)
     sprintf(writeText, "%s = %s\n", azColName[i], argv[i] ? argv[i] : "NULL");
     fputs(writeText, fp);
   }
-
   fclose(fp);
-
   printf("\n");
 
   return 0;
@@ -554,6 +550,8 @@ int main(int argc, char **argv)
         char *sql = "";
         sqlite3_stmt *res;
         const char *data = "Results function called";
+
+        // add if db file does not exit look for backup first
         rc = sqlite3_open(dbName, &db);
 
         if (rc)
@@ -609,11 +607,12 @@ int main(int argc, char **argv)
             char *second = "';";
             char *build = concat(first, term);
             sql = concat(build, second);
-
           }
           rc = sqlite3_exec(db, sql, results, (void *)data, &zErrMsg);
-          if (rc != SQLITE_ROW) {
 
+
+          // change to a global counter in results function to determine if no results
+          if (rc != SQLITE_ROW) {
             FILE *fp;
             fp = fopen("data", "a");
             fprintf(fp, "--End of File--\n");
@@ -626,6 +625,7 @@ int main(int argc, char **argv)
         if (rc != SQLITE_OK)
         {
           fprintf(stderr, "SQL error: %s\n", zErrMsg);
+          writeToResults(file, "Error: Unable to complete operation\n");
           sqlite3_free(zErrMsg);
         }
         else
@@ -634,12 +634,14 @@ int main(int argc, char **argv)
           writeToResults(file, "Operation Complete\n");
         }
 
+        // close db
+        printf("Database closed\n");
+        sqlite3_close(db);
+
         //Release mutex lock for backup daemon
         pthread_mutex_unlock(&dbLock);
         printf("Server: Mutex lock released.\n");
 
-        printf("Database closed\n");
-        sqlite3_close(db);
         close(file);
         // start sending results file back
 
@@ -648,8 +650,8 @@ int main(int argc, char **argv)
           strcpy(filename, "data");
         else
           strcpy(filename, "results");
+        
         file = open(filename, O_RDONLY);
-
         if (file < 0)
         {
           fprintf(stderr, "Error: %s\n", strerror(errno));
@@ -660,7 +662,6 @@ int main(int argc, char **argv)
           int size;              // size left in file
 
           // Loop: Server reads a chunk of the local file and sends it to the client via message
-
           do
           {
             size = read(file, buf, BUFFER_SIZE); // get remaining size and load buffer
