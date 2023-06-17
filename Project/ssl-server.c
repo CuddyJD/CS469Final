@@ -501,15 +501,16 @@ int main(int argc, char **argv)
     exit(EXIT_FAILURE);
   }
 
+
   // This will create a network socket and return a socket descriptor, which is
   // and works just like a file descriptor, but for network communcations. Note
   // we have to specify which TCP/UDP port on which we are communicating as an
   // argument to our user-defined create_socket() function.
   sockfd = create_socket(port);
-
-  // Wait for incoming connections and handle them as the arrive
   while (true)
   {
+  // Wait for incoming connections and handle them as the arrive
+
     SSL *ssl;
     int client;
     int readfd;
@@ -571,8 +572,7 @@ int main(int argc, char **argv)
         sscanf(buffer, "%s", command);
         if (strcmp(command, "exit") == 0)
         {
-          exit = 0;
-          break;
+            break;
         }
 
         char operation[BUFFER_SIZE];
@@ -721,7 +721,7 @@ int main(int argc, char **argv)
           } while (size != 0);
         }
 
-      } while (exit != 0);
+      } while (true);
 
 
       // Terminate the SSL session, close the TCP connection, and clean up
@@ -731,14 +731,14 @@ int main(int argc, char **argv)
       close(client);
 
     }
-    //Block and wait for Backup Daemon to complete and join
-    pthread_join(threadID, NULL);
+    printf("Server: Listening...\n");
+  }
 
     // Tear down and clean up server data structures before terminating
     SSL_CTX_free(ssl_ctx);
     cleanup_openssl();
     close(sockfd);
-
+    //Block and wait for Backup Daemon to complete and join
+    pthread_join(threadID, NULL);
     return EXIT_SUCCESS;
-  }
 }
