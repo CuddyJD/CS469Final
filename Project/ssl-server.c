@@ -51,6 +51,9 @@ static pthread_mutex_t dbLock = PTHREAD_MUTEX_INITIALIZER;
 //Time intervals between backups in seconds. Global to share between main and threads.
 int backupTime = DEFAULT_BACKUPTIME;
 
+//Results counter
+int resultsCount = 0;
+
 /******************************************************************************
 
 This function does the basic necessary housekeeping to establish TCP connections
@@ -228,6 +231,8 @@ static int results(void *NotUsed, int argc, char **argv, char **azColName)
 {
   int i;
   FILE *fp;
+
+  resultsCount++;
 
   fp = fopen("data", "a");
   if (fp == NULL) {
@@ -600,6 +605,8 @@ int main(int argc, char **argv)
         {
           if (makeDataFile())
             fprintf(stderr, "Error: Unable to make data file \n");
+
+          resultsCount = 0;
           if (strcmp(term, "all") == 0)
             sql = "SELECT * FROM USERS;";
           else {
@@ -609,15 +616,16 @@ int main(int argc, char **argv)
             sql = concat(build, second);
           }
           rc = sqlite3_exec(db, sql, results, (void *)data, &zErrMsg);
+          printf("%d results found\n", resultsCount);
+          FILE *fp;
+          fp = fopen("data", "a");
 
-
-          // change to a global counter in results function to determine if no results
-          if (rc != SQLITE_ROW) {
-            FILE *fp;
-            fp = fopen("data", "a");
+          if (resultsCount == 0) {
+            fprintf(fp, "No results found\n");
+          } else {
             fprintf(fp, "--End of File--\n");
-            fclose(fp);
           } 
+          fclose(fp);
         }
 
         printf("Executing command: %s\n", sql);
