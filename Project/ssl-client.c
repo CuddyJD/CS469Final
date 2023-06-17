@@ -1,19 +1,11 @@
 /******************************************************************************
 
 PROGRAM:  ssl-client.c
-AUTHOR:   William Sung
+AUTHOR:   Joshua Cuddy, William Sung
 COURSE:   CS469 - Distributed Systems (Regis University)
-SYNOPSIS: This program is a small client application that establishes a secure
-          TCP connection to a server and simply exchanges messages. It uses a
-          SSL/TLS connection using X509 certificates generated with the openssl
-          application.
-
-          The purpose is to demonstrate how to establish and use secure
-          communication channels between a client and server using public key
-          cryptography.
-
-          Some of the code and descriptions can be found in "Network Security
-          with OpenSSL", O'Reilly Media, 2002.
+SYNOPSIS: This program is a client application that sends query request to an 
+          server via a ssl connection. Results are returned and displayed to the
+          user on the command line.
 
 ******************************************************************************/
 #include <netdb.h>

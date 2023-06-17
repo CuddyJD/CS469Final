@@ -1,25 +1,11 @@
 /******************************************************************************
 
 PROGRAM:  ssl-server.c
-AUTHOR:   William Sung
+AUTHOR:   Joshua Cuddy, William Sung
 COURSE:   CS469 - Distributed Systems (Regis University)
-SYNOPSIS: This program is a small server application that receives incoming TCP
-          connections from clients and transfers a requested file from the
-          server to the client.  It uses a secure SSL/TLS connection using
-          a certificate generated with the openssl application.
-
-          To create a self-signed certificate your server can use, at the
-          command prompt type:
-
-          openssl req -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out cert.pem
-
-          This will create two files: a private key contained in the file
-          'key.pem' and a certificate containing a public key in the file
-          'cert.pem'. Your server will require both in order to operate
-          properly. These files are not needed by the client.
-
-          Some of the code and descriptions can be found in "Network Security
-          with OpenSSL", O'Reilly Media, 2002.
+SYNOPSIS: This program is a server that handles queries from a client over a ssl
+          connection. Upon receipt of the query, the sqlite3 database will be 
+          polled and results will be returned to the client. 
 
 ******************************************************************************/
 #include <fcntl.h>
