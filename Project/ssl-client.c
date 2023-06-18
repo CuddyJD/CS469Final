@@ -92,21 +92,10 @@ int create_socket(char *hostname, unsigned int port)
 }
 
 /******************************************************************************
-
-The sequence of steps required to establish a secure SSL/TLS connection is:
-
-1.  Initialize the SSL algorithms
-2.  Create and configure an SSL context object
-3.  Create an SSL session object
-4.  Create a new network socket in the traditional way
-5.  Bind the SSL object to the network socket descriptor
-6.  Establish an SSL session on top of the network connection
-
-Once these steps are completed successfully, use the functions SSL_read() and
-SSL_write() to read from/write to the socket, but using the SSL object rather
-then the socket descriptor.  Once the session is complete, free the memory
-allocated to the SSL object and close the socket descriptor.
-
+ * Main program establishes an SSL connection with the database server to perform
+ * queries base on user inputs. Program will present user will sqlite3 operations
+ * options and prompt for a term. When reply is received from server, client will
+ * display results in the command line.
 ******************************************************************************/
 int main(int argc, char **argv)
 {
