@@ -206,6 +206,9 @@ void configure_context(SSL_CTX *ssl_ctx)
   }
 }
 
+/**
+ * Writes into results file specificied text
+*/
 void writeToResults(int fp, char *writeText) {
   int size = write(fp, writeText, strlen(writeText));
   if (size < 0) {
@@ -213,6 +216,10 @@ void writeToResults(int fp, char *writeText) {
   }
 }
 
+
+/*
+* Callback function for sqlite3 exec, loops through results and displays them while adding into data file
+*/
 static int results(void *NotUsed, int argc, char **argv, char **azColName)
 {
   int i;
@@ -240,6 +247,9 @@ static int results(void *NotUsed, int argc, char **argv, char **azColName)
   return 0;
 }
 
+/**
+ * concatenates two strings together into a new string
+*/
 char *concat(const char *s1, const char *s2)
 {
   const size_t len1 = strlen(s1);
@@ -251,6 +261,10 @@ char *concat(const char *s1, const char *s2)
   return result;
 }
 
+
+/**
+ * creates data file and writes header into file
+*/
 int makeDataFile()
 {
   // create new data file or overwrite the old one
@@ -265,6 +279,9 @@ int makeDataFile()
   return 0;
 }
 
+/**
+ * creates results file
+*/
 int makeResultsFile()
 {
   // operation results file
@@ -403,22 +420,159 @@ bool restore(){
     }
 }
 
+/*
+* Sends passed in file name over passed in ssl connection
+*/
+void sendFile(char* filename, SSL *ssl) {
+  int file = open(filename, O_RDONLY);
+        if (file < 0)
+        {
+          fprintf(stderr, "Error: %s\n", strerror(errno));
+        }
+        else
+        {
+          char buf[BUFFER_SIZE]; // buffer
+          int size;              // size left in file
+
+          // Loop: Server reads a chunk of the local file and sends it to the client via message
+          do
+          {
+            size = read(file, buf, BUFFER_SIZE); // get remaining size and load buffer
+            SSL_write(ssl, buf, size);           // send to client
+          } while (size != 0);
+        }
+}
+
+/**
+ * Performs selected sqlite3 operation on term 
+*/
+int performOperation(char *operation, char *term) {
+          //Aquire mutex lock to prevent access while backup in progress
+        pthread_mutex_lock(&dbLock);
+        printf("Server: Mutex lock aquired.\n");
+
+        // start db code
+        char dbName[50];
+        strcpy(dbName, "users.sqlite3");
+
+        sqlite3 *db;
+        char *zErrMsg = 0;
+        int rc;
+        char *sql = "";
+        sqlite3_stmt *res;
+        const char *data = "Results function called";
+
+        // add if db file does not exit look for backup first
+        rc = sqlite3_open(dbName, &db);
+
+        if (rc)
+        {
+          fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
+          return rc;
+        }
+        else
+        {
+          fprintf(stderr, "Opened database successfully\n");
+        }
+
+
+        int file = makeResultsFile();
+
+        // make user table
+        // Create SQL statement
+        sql = "CREATE TABLE if not exists USERS("
+              "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
+              "USERNAME TEXT NOT NULL);";
+
+        // Execute SQL statement
+        rc = sqlite3_exec(db, sql, results, 0, &zErrMsg);
+        if (rc) {
+          fprintf(stderr, "SQL error: %s\n", zErrMsg);
+          sqlite3_free(zErrMsg);
+          return rc;
+        }
+
+        if (strcmp(operation, "add") == 0)
+        {
+
+          char *first = "INSERT INTO USERS VALUES (NULL, '";
+          char *second = "');";
+          char *build = concat(first, term);
+          sql = concat(build, second);
+          rc = sqlite3_exec(db, sql, results, 0, &zErrMsg);
+          
+        }
+
+        if (strcmp(operation, "delete") == 0)
+        {
+          char *first = "DELETE FROM USERS WHERE USERNAME='";
+          char *second = "';";
+          char *build = concat(first, term);
+          sql = concat(build, second);
+
+          rc = sqlite3_exec(db, sql, results, 0, &zErrMsg);
+
+        }
+
+        if (strcmp(operation, "display") == 0)
+        {
+          if (makeDataFile())
+            fprintf(stderr, "Error: Unable to make data file \n");
+
+          resultsCount = 0;
+          if (strcmp(term, "all") == 0)
+            sql = "SELECT * FROM USERS;";
+          else {
+            char *first = "SELECT * FROM USERS WHERE USERNAME='";
+            char *second = "';";
+            char *build = concat(first, term);
+            sql = concat(build, second);
+          }
+          rc = sqlite3_exec(db, sql, results, (void *)data, &zErrMsg);
+          printf("%d results found\n", resultsCount);
+          FILE *fp;
+          fp = fopen("data", "a");
+
+          if (resultsCount == 0) {
+            fprintf(fp, "No results found\n--End of File--");
+          } else {
+            fprintf(fp, "--End of File--\n");
+          } 
+          fclose(fp);
+        }
+
+        printf("Executing command: %s\n", sql);
+
+        if (rc != SQLITE_OK)
+        {
+          fprintf(stderr, "SQL error: %s\n", zErrMsg);
+          writeToResults(file, "Error: Unable to complete operation\n");
+          sqlite3_free(zErrMsg);
+        }
+        else
+        {
+          fprintf(stdout, "Operation Complete\n");
+          writeToResults(file, "Operation Complete\n");
+        }
+
+        // close db
+        printf("Database closed\n");
+        sqlite3_close(db);
+
+        //Release mutex lock for backup daemon
+        pthread_mutex_unlock(&dbLock);
+        printf("Server: Mutex lock released.\n");
+
+        close(file);
+
+        return rc;
+}
+
 /******************************************************************************
 
-The sequence of steps required to establish a secure SSL/TLS connection is:
-
-1.  Initialize the SSL algorithms
-2.  Create and configure an SSL context object
-3.  Create a new network socket in the traditional way
-4.  Listen for incoming connections
-5.  Accept incoming connections as they arrive
-6.  Create a new SSL object for the newly arrived connection
-7.  Bind the SSL object to the network socket descriptor
-
-Once these steps are completed successfully, use the functions SSL_read() and
-SSL_write() to read from/write to the socket, but using the SSL object rather
-then the socket descriptor.  Once the session is complete, free the memory
-allocated to the SSL object and close the socket descriptor.
+The main program will perform as a server for sqlite3 database queries over an
+ssl connection with clients. Backup daemon is configured upon startup to make a
+.bak file for the sqlite3 db.
 
 ******************************************************************************/
 
@@ -507,6 +661,9 @@ int main(int argc, char **argv)
   // we have to specify which TCP/UDP port on which we are communicating as an
   // argument to our user-defined create_socket() function.
   sockfd = create_socket(port);
+  
+
+
   while (true)
   {
   // Wait for incoming connections and handle them as the arrive
@@ -585,142 +742,15 @@ int main(int argc, char **argv)
         else
           printf("Server: Command received from client: %s %s\n", operation, term);
 
-        //Aquire mutex lock to prevent access while backup in progress
-        pthread_mutex_lock(&dbLock);
-        printf("Server: Mutex lock aquired.\n");
-
-        // start db code
-        char dbName[50];
-        strcpy(dbName, "users.sqlite3");
-
-        sqlite3 *db;
-        char *zErrMsg = 0;
-        int rc;
-        char *sql = "";
-        sqlite3_stmt *res;
-        const char *data = "Results function called";
-
-        // add if db file does not exit look for backup first
-        rc = sqlite3_open(dbName, &db);
-
-        if (rc)
-        {
-          fprintf(stderr, "Can't open database: %s\n", sqlite3_errmsg(db));
-          return (0);
-        }
-        else
-        {
-          fprintf(stderr, "Opened database successfully\n");
-        }
-
-
-        int file = makeResultsFile();
-
-        // make user table
-        /* Create SQL statement */
-        sql = "CREATE TABLE if not exists USERS("
-              "ID INTEGER PRIMARY KEY AUTOINCREMENT,"
-              "USERNAME TEXT NOT NULL);";
-
-        /* Execute SQL statement */
-        rc = sqlite3_exec(db, sql, results, 0, &zErrMsg);
-
-        if (strcmp(operation, "add") == 0)
-        {
-
-          char *first = "INSERT INTO USERS VALUES (NULL, '";
-          char *second = "');";
-          char *build = concat(first, term);
-          sql = concat(build, second);
-          rc = sqlite3_exec(db, sql, results, 0, &zErrMsg);
-        }
-
-        if (strcmp(operation, "delete") == 0)
-        {
-          char *first = "DELETE FROM USERS WHERE USERNAME='";
-          char *second = "';";
-          char *build = concat(first, term);
-          sql = concat(build, second);
-
-          rc = sqlite3_exec(db, sql, results, 0, &zErrMsg);
-        }
-
-        if (strcmp(operation, "display") == 0)
-        {
-          if (makeDataFile())
-            fprintf(stderr, "Error: Unable to make data file \n");
-
-          resultsCount = 0;
-          if (strcmp(term, "all") == 0)
-            sql = "SELECT * FROM USERS;";
-          else {
-            char *first = "SELECT * FROM USERS WHERE USERNAME='";
-            char *second = "';";
-            char *build = concat(first, term);
-            sql = concat(build, second);
-          }
-          rc = sqlite3_exec(db, sql, results, (void *)data, &zErrMsg);
-          printf("%d results found\n", resultsCount);
-          FILE *fp;
-          fp = fopen("data", "a");
-
-          if (resultsCount == 0) {
-            fprintf(fp, "No results found\n");
-          } else {
-            fprintf(fp, "--End of File--\n");
-          } 
-          fclose(fp);
-        }
-
-        printf("Executing command: %s\n", sql);
+        performOperation(operation, term);
         
-        if (rc != SQLITE_OK)
-        {
-          fprintf(stderr, "SQL error: %s\n", zErrMsg);
-          writeToResults(file, "Error: Unable to complete operation\n");
-          sqlite3_free(zErrMsg);
-        }
-        else
-        {
-          fprintf(stdout, "Operation Complete\n");
-          writeToResults(file, "Operation Complete\n");
-        }
-
-        // close db
-        printf("Database closed\n");
-        sqlite3_close(db);
-
-        //Release mutex lock for backup daemon
-        pthread_mutex_unlock(&dbLock);
-        printf("Server: Mutex lock released.\n");
-
-        close(file);
         // start sending results file back
-
         char filename[25];
         if (strcmp(operation, "display") == 0)
-          strcpy(filename, "data");
+          sendFile("data", ssl);
         else
-          strcpy(filename, "results");
+          sendFile("results", ssl);
         
-        file = open(filename, O_RDONLY);
-        if (file < 0)
-        {
-          fprintf(stderr, "Error: %s\n", strerror(errno));
-        }
-        else
-        {
-          char buf[BUFFER_SIZE]; // buffer
-          int size;              // size left in file
-
-          // Loop: Server reads a chunk of the local file and sends it to the client via message
-          do
-          {
-            size = read(file, buf, BUFFER_SIZE); // get remaining size and load buffer
-            SSL_write(ssl, buf, size);           // send to client
-          } while (size != 0);
-        }
-
       } while (true);
 
 
