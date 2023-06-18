@@ -40,6 +40,8 @@ int backupTime = DEFAULT_BACKUPTIME;
 //Results counter
 int resultsCount = 0;
 
+// thread addresses
+pthread_t     threadIDs[10];
 /******************************************************************************
 
 This function does the basic necessary housekeeping to establish TCP connections
@@ -205,6 +207,13 @@ void configure_context(SSL_CTX *ssl_ctx)
     exit(EXIT_FAILURE);
   }
 }
+
+struct args {
+  int tnum;
+  int client;
+  char* client_addr;
+  SSL *ssl;
+};
 
 /**
  * Writes into results file specificied text
@@ -568,6 +577,62 @@ int performOperation(char *operation, char *term) {
         return rc;
 }
 
+void* threadClient(void *clientArgs)
+{
+        struct args *data = (struct args *) clientArgs;
+        SSL *ssl = data->ssl;
+        int client = data->client;
+        int tnum = data->tnum;
+        char client_addr[INET_ADDRSTRLEN];
+
+        strcpy(client_addr, data->client_addr);
+
+        
+
+        char buffer[BUFFER_SIZE],
+            command[BUFFER_SIZE];
+        do
+        {
+          printf("Server: Listening...\n");
+          // This is where the server actually does the work receiving and sending messages
+          bzero(buffer, BUFFER_SIZE);
+          int nbytes_read = SSL_read(ssl, buffer, BUFFER_SIZE);
+
+          sscanf(buffer, "%s", command);
+          if (strcmp(command, "exit") == 0)
+          {
+            break;
+          }
+
+          char operation[BUFFER_SIZE];
+          char term[BUFFER_SIZE];
+
+          sscanf(buffer, "%s %s", operation, term);
+
+          if (nbytes_read < 0)
+            fprintf(stderr, "Server: Error reading from socket: %s\n", strerror(errno));
+          else
+            printf("Server: Command received from client: %s %s\n", operation, term);
+
+          performOperation(operation, term);
+
+          // start sending results file back
+          char filename[25];
+          if (strcmp(operation, "display") == 0)
+            sendFile("data", ssl);
+          else
+            sendFile("results", ssl);
+
+        } while (true);
+
+        // Terminate the SSL session, close the TCP connection, and clean up
+        printf("Server: Terminating SSL session and TCP connection with client (%s)\n",
+               client_addr);
+        SSL_free(ssl);
+        close(client);
+        pthread_join(threadIDs[tnum], NULL);
+}
+
 /******************************************************************************
 
 The main program will perform as a server for sqlite3 database queries over an
@@ -581,6 +646,7 @@ int main(int argc, char **argv)
   SSL_CTX       *ssl_ctx;
   unsigned int  sockfd;
   unsigned int  port;
+  int           thread = 0;
   char          buffer[BUFFER_SIZE],
                 inputStr[BUFFER_SIZE];
   int           inputInt,
@@ -661,10 +727,75 @@ int main(int argc, char **argv)
   // we have to specify which TCP/UDP port on which we are communicating as an
   // argument to our user-defined create_socket() function.
   sockfd = create_socket(port);
-  
-
 
   while (true)
+  {
+    // Wait for incoming connections and handle them as the arrive
+
+    SSL *ssl;
+    int client;
+    int readfd;
+    int rcount;
+    const char reply[] = "Hello World!";
+    struct sockaddr_in addr;
+    unsigned int len = sizeof(addr);
+    char client_addr[INET_ADDRSTRLEN];
+
+    // Once an incoming connection arrives, accept it.  If this is successful,
+    // we now have a connection between client and server and can communicate
+    // using the socket descriptor
+
+    client = accept(sockfd, (struct sockaddr *)&addr, &len);
+    if (client < 0)
+    {
+        fprintf(stderr, "Server: Unable to accept connection: %s\n",
+                strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    // Display the IPv4 network address of the connected client
+    inet_ntop(AF_INET, (struct in_addr *)&addr.sin_addr, client_addr,
+              INET_ADDRSTRLEN);
+    printf("Server: Established TCP connection with client (%s) on port %u\n",
+           client_addr, port);
+
+    // Here we are creating a new SSL object to bind to the socket descriptor
+    ssl = SSL_new(ssl_ctx);
+
+    // Bind the SSL object to the network socket descriptor. The socket
+    // descriptor will be used by OpenSSL to communicate with a client. This
+    // function should only be called once the TCP connection is established.
+    SSL_set_fd(ssl, client);
+
+    // The last step in establishing a secure connection is calling SSL_accept(),
+    // which executes the SSL/TLS handshake.  Because network sockets are
+    // blocking by default, this function will block as well until the handshake
+    // is complete.
+    if (SSL_accept(ssl) <= 0)
+    {
+        fprintf(stderr, "Server: Could not establish secure connection:\n");
+        ERR_print_errors_fp(stderr);
+    }
+    else
+    {
+        struct args *clientArgs = (struct args*) malloc (sizeof(struct args));
+        printf("Server: Established SSL/TLS connection with client (%s)\n",
+               client_addr);
+        
+        clientArgs->client = client;
+        clientArgs->client_addr = client_addr;
+        clientArgs->ssl = ssl;
+        if (thread == 10) {
+          thread = 0;
+        }
+        clientArgs->tnum = thread;
+        pthread_create(&threadIDs[thread], NULL, threadClient, clientArgs);
+        thread++;
+
+    }
+  }
+
+/*   while (true)
   {
   // Wait for incoming connections and handle them as the arrive
 
@@ -761,9 +892,9 @@ int main(int argc, char **argv)
       close(client);
 
     }
-    printf("Server: Listening...\n");
-  }
 
+  } */
+    printf("Server: Listening...\n");
     // Tear down and clean up server data structures before terminating
     SSL_CTX_free(ssl_ctx);
     cleanup_openssl();
