@@ -493,6 +493,8 @@ int performOperation(char *operation, char *term)
   sqlite3_stmt *res;
   const char *data = "Results function called";
 
+  // if db file not found check for backup if backup not found do nothing
+
   // add if db file does not exit look for backup first
   rc = sqlite3_open(dbName, &db);
 
@@ -565,7 +567,7 @@ int performOperation(char *operation, char *term)
 
     if (resultsCount == 0)
     {
-      fprintf(fp, "No results found\n--End of File--");
+      fprintf(fp, "No results found\n--End of File--\n");
     }
     else
     {
@@ -638,6 +640,8 @@ void *threadClient(void *clientArgs)
       fprintf(stderr, "Server: Error reading from socket: %s\n", strerror(errno));
     else
       printf("Server: Command received from client: %s %s\n", operation, term);
+
+    // if not needed to make a move open here
 
     performOperation(operation, term);
 
