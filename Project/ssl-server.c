@@ -255,7 +255,6 @@ static int results(void *NotUsed, int argc, char **argv, char **azColName)
     fputs(writeText, fp);
   }
   fclose(fp);
-  printf("\n");
 
   return 0;
 }
