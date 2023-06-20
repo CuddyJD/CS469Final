@@ -305,86 +305,6 @@ int makeResultsFile()
   return file;
 }
 
-// When called, function backs up the DB to a backup file every 'time' seconds
-void *backup(void *param)
-{
-  long long byteCount;
-  int readFile,
-      writeFile,
-      readResult,
-      writeResult;
-  bool complete;
-  char buffer[BUFFER_SIZE];
-
-  printf("Backup Daemon: Starting up!\n");
-  bzero(buffer, BUFFER_SIZE);
-
-  // Continue backup loop forever!
-  while (true)
-  {
-    sleep(backupTime); // delay in backup cycles
-
-    // Block until mutex lock is aquired
-    pthread_mutex_lock(&dbLock);
-    printf("Backup Daemon: Mutex lock aquired.\n");
-
-    // Open source file and test for success
-    readFile = open(DB_PATH, O_RDONLY, 0);
-    if (readFile < 0)
-    {
-      printf("Backup Daemon: ERROR! Unable to open source file '%s' (%s)\n", DB_PATH, strerror(errno));
-      continue;
-    }
-
-    // Attempt to create destination for copy data
-    writeFile = creat(DB_PATH_BACKUP, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-    if (writeFile < 0)
-    {
-      printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
-      continue;
-    }
-
-    // Copy source file into destination
-    complete = false;
-    byteCount = 0;
-    while (!complete)
-    {
-      // Read next buffer
-      readResult = read(readFile, buffer, BUFFER_SIZE);
-      if (readResult == 0)
-      { // End of file
-        complete = true;
-        printf("Backup Daemon: %lli total bytes backed up from '%s' to '%s'\n", byteCount, DB_PATH, DB_PATH_BACKUP);
-        close(readFile);
-        close(writeFile);
-      }
-      else if (readResult < 0)
-      { // Read error
-        printf("Backup Daemon: Unable to read from source file '%s' (%s)\n", DB_PATH, strerror(errno));
-        pthread_mutex_unlock(&dbLock);
-        break;
-      }
-      else if (!complete)
-      { // Read success
-        writeResult = write(writeFile, buffer, readResult);
-
-        if (writeResult < 0)
-        { // Write error
-          printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n",
-                 DB_PATH_BACKUP, strerror(errno));
-          pthread_mutex_unlock(&dbLock);
-          break;
-        }
-        byteCount += writeResult; // tracking total data copied for final display
-      }
-    }
-
-    // Release db mutex lock for client operations
-    pthread_mutex_unlock(&dbLock);
-    printf("Backup Daemon: Mutex lock released.\n");
-  }
-}
-
 // When called, restores backup file into main db path. Modified non-looping version of backup method w reversed paths
 bool restore()
 {
@@ -449,6 +369,99 @@ bool restore()
   }
 }
 
+// When called, function backs up the DB to a backup file every 'time' seconds
+void *backup(void *param)
+{
+  long long byteCount;
+  int readFile,
+      writeFile,
+      readResult,
+      writeResult;
+  bool complete;
+  char buffer[BUFFER_SIZE];
+  sqlite3 *db;
+
+  printf("Backup Daemon: Starting up!\n");
+  bzero(buffer, BUFFER_SIZE);
+
+  // Continue backup loop forever!
+  while (true)
+  {
+    sleep(backupTime); // delay in backup cycles
+
+    // Block until mutex lock is aquired
+    pthread_mutex_lock(&dbLock);
+    printf("Backup Daemon: Mutex lock aquired.\n");
+
+    // Open source file and test for success
+    readFile = open(DB_PATH, O_RDONLY, 0);
+    if (readFile < 0)
+    {
+      printf("Backup Daemon: ERROR! Unable to open source file '%s' (%s)\n", DB_PATH, strerror(errno));
+
+      if(errno == ENOENT){ // Unable to find database file
+          printf("Backup Daemon: Attempting to restore database from backup...\n");
+          if(!restore()){   // Attempt to restore from .bak backup file, initialize new db if unsuccessful
+              printf("Backup Daemon: Initializing new database file.\n");
+              sqlite3_open(DB_PATH, &db);
+              sqlite3_close(db);
+          }
+      }
+
+      pthread_mutex_unlock(&dbLock);
+      printf("Backup Daemon: Mutex lock released.\n");
+      continue;
+    }
+
+    // Attempt to create destination for copy data
+    writeFile = creat(DB_PATH_BACKUP, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+    if (writeFile < 0)
+    {
+      printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n", DB_PATH_BACKUP, strerror(errno));
+      continue;
+    }
+
+    // Copy source file into destination
+    complete = false;
+    byteCount = 0;
+    while (!complete)
+    {
+      // Read next buffer
+      readResult = read(readFile, buffer, BUFFER_SIZE);
+      if (readResult == 0)
+      { // End of file
+        complete = true;
+        printf("Backup Daemon: %lli total bytes backed up from '%s' to '%s'\n", byteCount, DB_PATH, DB_PATH_BACKUP);
+        close(readFile);
+        close(writeFile);
+      }
+      else if (readResult < 0)
+      { // Read error
+        printf("Backup Daemon: Unable to read from source file '%s' (%s)\n", DB_PATH, strerror(errno));
+        pthread_mutex_unlock(&dbLock);
+        break;
+      }
+      else if (!complete)
+      { // Read success
+        writeResult = write(writeFile, buffer, readResult);
+
+        if (writeResult < 0)
+        { // Write error
+          printf("Backup Daemon: Unable to write to destination file '%s' (%s)\n",
+                 DB_PATH_BACKUP, strerror(errno));
+          pthread_mutex_unlock(&dbLock);
+          break;
+        }
+        byteCount += writeResult; // tracking total data copied for final display
+      }
+    }
+
+    // Release db mutex lock for client operations
+    pthread_mutex_unlock(&dbLock);
+    printf("Backup Daemon: Mutex lock released.\n");
+  }
+}
+
 /*
  * Sends passed in file name over passed in ssl connection
  */
@@ -492,8 +505,18 @@ int performOperation(char *operation, char *term)
   char *sql = "";
   sqlite3_stmt *res;
   const char *data = "Results function called";
+  FILE *fileExists;
 
-  // if db file not found check for backup if backup not found do nothing
+  // Check for existing database file. If no db found, attempt to restore from backup. 
+  if(fileExists = fopen(dbName, "r")){
+      fclose(fileExists);
+  }else{
+      printf("Server: Unable to locate database file. Attempting restore from backup.\n");
+
+      if(!restore()){
+          printf("Server: New database file will be created.\n");
+      }
+  }
 
   // add if db file does not exit look for backup first
   rc = sqlite3_open(dbName, &db);
